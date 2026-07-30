@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Listas y accesos · Proan</title>
+  <style>
+    /* Paleta alineada con proan-Hidrocarburos para que las dos herramientas
+       parezcan de la misma familia. */
+    :root {
+      --bg: #faf9f6;
+      --surface: #ffffff;
+      --ink: #25272c;
+      --muted: #6f7278;
+      --line: #e4dfd8;
+      --accent: #3d3d7c;
+      --accent-hover: #202042;
+      --accent-soft: rgba(61, 61, 124, 0.09);
+      --accent-ring: rgba(61, 61, 124, 0.2);
+      --danger: #a12626;
+      --danger-soft: rgba(161, 38, 38, 0.1);
+      --success: #1e6b4a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #fbfaf7 0%, #f4f2ed 100%);
+      min-height: 100vh;
+      font-size: 15px;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button { border: 0; background: transparent; cursor: pointer; }
+
+    .shell { max-width: 1180px; margin: 0 auto; padding: 28px 24px 60px; }
+
+    /* ── Cabecera ──────────────────────────────────────────────────── */
+    .topbar {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .topbar h1 { margin: 0; font-size: 24px; font-weight: 650; }
+    .session { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+    .session strong { color: var(--ink); font-weight: 600; }
+    .link-button { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+    .link-button:hover { color: var(--ink); }
+
+    .tabs { display: flex; gap: 24px; margin: 0 0 4px; border-bottom: 1px solid var(--line); }
+    .tab {
+      padding: 14px 2px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-count { color: var(--muted); font-weight: 500; }
+
+    .layout { display: grid; grid-template-columns: 290px 1fr; gap: 36px; margin-top: 26px; }
+
+    /* ── Barra lateral: filas separadas por líneas, sin tarjetas ───── */
+    .sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .sidebar-head h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .search {
+      width: 100%;
+      margin: 14px 0 4px;
+      padding: 9px 0;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+    }
+    .search:focus { outline: none; border-bottom-color: var(--accent); }
+    .list-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 13px 12px 13px 13px;
+      border-bottom: 1px solid var(--line);
+      border-left: 2px solid transparent;
+    }
+    .list-item:hover { background: rgba(61, 61, 124, 0.04); }
+    .list-item.active { border-left-color: var(--accent); background: var(--accent-soft); }
+    .list-item-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .list-item-meta { margin-top: 5px; font-size: 12.5px; color: var(--muted); }
+    .pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+    .sidebar-note { margin: 16px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+    /* ── Detalle ───────────────────────────────────────────────────── */
+    .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+    .name-input {
+      width: 100%;
+      padding: 4px 0;
+      border: 0;
+      border-bottom: 1px solid transparent;
+      background: transparent;
+      font-size: 22px;
+      font-weight: 650;
+    }
+    .name-input:hover { border-bottom-color: var(--line); }
+    .name-input:focus { outline: none; border-bottom-color: var(--accent); }
+    .detail-meta { margin-top: 6px; font-size: 13px; color: var(--muted); }
+    .toggle { display: flex; align-items: center; gap: 8px; font-size: 13.5px; white-space: nowrap; }
+    .toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+    .block { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .block-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .block-note { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+
+    .rows { margin-top: 14px; }
+    .row { display: grid; gap: 10px 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .row.with-role { grid-template-columns: 1fr 150px 34px; }
+    .row.without-role { grid-template-columns: 1fr 34px; }
+    .row-email { width: 100%; padding: 7px 0; border: 0; border-bottom: 1px solid transparent; background: transparent; }
+    .row-email:hover { border-bottom-color: var(--line); }
+    .row-email:focus { outline: none; border-bottom-color: var(--accent); }
+    .row-role { padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .row-role:focus { outline: none; border-color: var(--accent); }
+    .row-remove { color: var(--muted); border-radius: 8px; width: 34px; height: 32px; }
+    .row-remove:hover { background: var(--danger-soft); color: var(--danger); }
+    .row-issue { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--muted); }
+    .row.is-invalid .row-email { border-bottom-color: var(--danger); }
+    .row.is-invalid .row-issue { color: var(--danger); }
+    .add-row { margin-top: 14px; color: var(--accent); font-weight: 600; font-size: 14px; }
+
+    .actions { display: flex; align-items: center; gap: 16px; margin-top: 26px; flex-wrap: wrap; }
+    .primary {
+      padding: 12px 22px;
+      border-radius: 12px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .primary:disabled { background: #dcdce4; color: #8b8b96; cursor: default; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent-ring);
+      outline-offset: 2px;
+    }
+    .status { font-size: 13.5px; color: var(--muted); }
+    .status.is-error { color: var(--danger); }
+    .status.is-ok { color: var(--success); }
+
+    details.history { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
+    details.history > summary {
+      display: flex; align-items: center; gap: 8px;
+      list-style: none; cursor: pointer; color: var(--muted); font-size: 13px;
+    }
+    details.history > summary::-webkit-details-marker { display: none; }
+    details.history > summary::after {
+      content: ""; width: 6px; height: 6px;
+      border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+      transform: rotate(45deg); transition: transform 120ms ease;
+    }
+    details.history[open] > summary::after { transform: rotate(-135deg); }
+    details.history > summary:hover { color: var(--ink); }
+    .history-entry { padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+    .history-entry span { color: var(--muted); }
+
+    .empty { padding: 26px 0; color: var(--muted); }
+    .hidden { display: none !important; }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; gap: 26px; }
+      .row.with-role { grid-template-columns: 1fr 130px 34px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <h1>Listas y accesos</h1>
+      <div class="session">
+        <span id="session-user"></span>
+        <button class="link-button" type="button" data-action="logout">Cerrar sesión</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" type="button" data-section="mailing">
+        Listas de correo <span class="tab-count" id="count-mailing"></span>
+      </button>
+      <button class="tab" type="button" data-section="access">
+        Accesos <span class="tab-count" id="count-access"></span>
+      </button>
+    </nav>
+
+    <section class="layout">
+      <aside>
+        <div class="sidebar-head">
+          <h2 id="sidebar-title">Listas</h2>
+        </div>
+        <input class="search" id="search" type="search" placeholder="Buscar…" autocomplete="off">
+        <div id="lists"></div>
+        <p class="sidebar-note">
+          Las listas se crean desde la consola de Firestore: una lista nueva no
+          sirve de nada hasta que alguna herramienta la lee. Aquí se gestiona
+          quién está en ellas.
+        </p>
+      </aside>
+
+      <main id="detail">
+        <div class="detail-head">
+          <div style="flex:1; min-width:0;">
+            <input class="name-input" id="name" placeholder="Nombre de la lista" autocomplete="off">
+            <p class="detail-meta" id="meta"></p>
+          </div>
+          <label class="toggle">
+            <input id="enabled" type="checkbox">
+            <span>Activa</span>
+          </label>
+        </div>
+
+        <div class="block">
+          <div class="block-title" id="rows-title">Destinatarios</div>
+          <p class="block-note" id="rows-note"></p>
+          <div class="rows" id="rows"></div>
+          <button class="add-row" type="button" data-action="add-row">+ Añadir</button>
+        </div>
+
+        <div class="actions">
+          <button class="primary" id="save" type="button" data-action="save">Guardar cambios</button>
+          <span class="status" id="status"></span>
+        </div>
+
+        <details class="history" id="history-block">
+          <summary data-action="load-history">Historial de cambios</summary>
+          <div id="history"></div>
+        </details>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    // ───────────────────────────────────────────────────────────────────
+    // Estado. Una sola fuente de verdad; el DOM se deriva de aquí.
+    //
+    // `pristine` guarda el formulario tal y como se cargó, para saber si hay
+    // cambios sin guardar. Antes no existía y cambiar de lista los descartaba
+    // en silencio.
+    // ───────────────────────────────────────────────────────────────────
+    const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    const ROLES = [
+      { value: 'generico', label: 'Genérico' },
+      { value: 'gerencia', label: 'Gerencia' }
+    ];
+
+    // Crear listas se hace en la consola de Firestore, no aquí: una lista nueva
+    // es inútil hasta que algún código la lee, así que crearla desde la interfaz
+    // sería media acción. Esta pantalla gestiona los miembros de las que existen.
+    const state = {
+      section: 'mailing',
+      lists: [],
+      search: '',
+      currentId: null,
+      form: null,
+      pristine: null
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function setStatus(message, kind = '') {
+      const el = $('status');
+      el.textContent = message || '';
+      el.className = 'status' + (kind ? ' is-' + kind : '');
+    }
+
+    // ── Modelo del formulario ────────────────────────────────────────
+    function formFromList(item) {
+      return {
+        list_id: item.list_id || '',
+        name: item.name || '',
+        kind: item.kind || 'mailing',
+        enabled: item.enabled !== false,
+        rows: (item.emails || []).map((email) => ({
+          email,
+          role: (item.roles || {})[email] || 'generico'
+        }))
+      };
+    }
+
+    function snapshot(form) {
+      return JSON.stringify(form);
+    }
+
+    function isDirty() {
+      return Boolean(state.form) && snapshot(state.form) !== state.pristine;
+    }
+
+    /** Devuelve el problema de cada fila, o null. El orden importa: lo que
+        bloquea el guardado se detecta antes que lo que solo avisa. */
+    function rowIssues(rows) {
+      const vistos = new Map();
+      rows.forEach((row, index) => {
+        const clave = row.email.trim().toLowerCase();
+        if (clave) {
+          if (!vistos.has(clave)) vistos.set(clave, index);
+        }
+      });
+      return rows.map((row, index) => {
+        const valor = row.email.trim();
+        if (!valor) return { kind: 'empty', blocking: false, text: 'Vacía: se descartará al guardar.' };
+        if (!EMAIL_RE.test(valor)) return { kind: 'invalid', blocking: true, text: 'No parece una dirección de correo.' };
+        if (vistos.get(valor.toLowerCase()) !== index) {
+          return { kind: 'duplicate', blocking: true, text: 'Repetida: ya está más arriba.' };
+        }
+        return null;
+      });
+    }
+
+    function blockingProblems() {
+      if (!state.form) return ['No hay lista seleccionada.'];
+      const problemas = [];
+      if (!state.form.name.trim()) problemas.push('Falta el nombre.');
+      const issues = rowIssues(state.form.rows);
+      if (issues.some((issue) => issue && issue.blocking)) problemas.push('Hay correos mal escritos o repetidos.');
+      const utiles = state.form.rows.filter((row) => row.email.trim()).length;
+      if (state.form.enabled && !utiles) problemas.push('Una lista activa necesita al menos un correo.');
+      return problemas;
+    }
+
+    // ── Render ───────────────────────────────────────────────────────
+    function visibleLists() {
+      const termino = state.search.trim().toLowerCase();
+      return state.lists
+        .filter((item) => (item.kind || 'mailing') === state.section)
+        .filter((item) => !termino
+          || (item.name || '').toLowerCase().includes(termino)
+          || (item.list_id || '').toLowerCase().includes(termino));
+    }
+
+    function renderTabs() {
+      const porTipo = { mailing: 0, access: 0 };
+      state.lists.forEach((item) => { porTipo[(item.kind || 'mailing')] += 1; });
+      $('count-mailing').textContent = porTipo.mailing ? `(${porTipo.mailing})` : '';
+      $('count-access').textContent = porTipo.access ? `(${porTipo.access})` : '';
+      document.querySelectorAll('.tab').forEach((tab) => {
+        tab.classList.toggle('active', tab.dataset.section === state.section);
+      });
+      $('sidebar-title').textContent = state.section === 'access' ? 'Listas de acceso' : 'Listas de correo';
+    }
+
+    function renderSidebar() {
+      const root = $('lists');
+      const items = visibleLists();
+      if (!items.length) {
+        root.innerHTML = `<p class="empty">${state.search
+          ? 'Ninguna lista coincide.'
+          : 'No hay listas en esta sección todavía.'}</p>`;
+        return;
+      }
+      root.innerHTML = items.map((item) => {
+        const activa = item.list_id === state.currentId;
+        const total = (item.emails || []).length;
+        return `
+          <button type="button" class="list-item ${activa ? 'active' : ''}" data-select="${escapeHtml(item.list_id)}">
+            <span class="list-item-name">
+              ${escapeHtml(item.name || item.list_id)}
+              ${item.enabled === false ? '<span class="pill">Inactiva</span>' : ''}
+            </span>
+            <span class="list-item-meta">${escapeHtml(item.list_id)} · ${total} ${total === 1 ? 'correo' : 'correos'}</span>
+          </button>`;
+      }).join('');
+    }
+
+    function renderRows() {
+      const root = $('rows');
+      if (!state.form) { root.innerHTML = ''; return; }
+      const conRol = state.form.kind === 'access';
+      const issues = rowIssues(state.form.rows);
+
+      root.innerHTML = state.form.rows.map((row, index) => {
+        const issue = issues[index];
+        const opciones = ROLES.map((rol) => `
+          <option value="${rol.value}" ${row.role === rol.value ? 'selected' : ''}>${rol.label}</option>`).join('');
+        return `
+          <div class="row ${conRol ? 'with-role' : 'without-role'} ${issue && issue.blocking ? 'is-invalid' : ''}" data-index="${index}">
+            <input class="row-email" type="email" value="${escapeHtml(row.email)}"
+                   placeholder="usuario@proan.com" autocomplete="off" spellcheck="false">
+            ${conRol ? `<select class="row-role" aria-label="Rol">${opciones}</select>` : ''}
+            <button class="row-remove" type="button" data-remove="${index}" aria-label="Quitar" title="Quitar">&#10005;</button>
+            <p class="row-issue">${issue ? escapeHtml(issue.text) : ''}</p>
+          </div>`;
+      }).join('');
+    }
+
+    /** Actualiza avisos y botón sin volver a pintar las filas, para no perder
+        el foco mientras se escribe. */
+    function refreshValidation() {
+      if (!state.form) return;
+      const issues = rowIssues(state.form.rows);
+      $('rows').querySelectorAll('.row').forEach((el) => {
+        const issue = issues[Number(el.dataset.index)];
+        el.classList.toggle('is-invalid', Boolean(issue && issue.blocking));
+        const aviso = el.querySelector('.row-issue');
+        if (aviso) aviso.textContent = issue ? issue.text : '';
+      });
+      updateSaveState();
+    }
+
+    function updateSaveState() {
+      const problemas = blockingProblems();
+      const sucio = isDirty();
+      const boton = $('save');
+      boton.disabled = !sucio || problemas.length > 0;
+      // Los avisos solo aparecen si has tocado algo: un formulario recién abierto
+      // no debe recibirte con un error en rojo.
+      if (sucio && problemas.length) {
+        setStatus(problemas[0], 'error');
+      } else if (sucio) {
+        setStatus('Cambios sin guardar.');
+      } else if (!$('status').classList.contains('is-ok')) {
+        setStatus('');
+      }
+    }
+
+    function renderDetail() {
+      const hay = Boolean(state.form);
+      $('detail').classList.toggle('hidden', !hay);
+      if (!hay) return;
+
+      $('name').value = state.form.name;
+      $('enabled').checked = state.form.enabled;
+
+      const esAcceso = state.form.kind === 'access';
+      $('rows-title').textContent = esAcceso ? 'Personas con acceso' : 'Destinatarios';
+      $('rows-note').textContent = esAcceso
+        ? 'Gerencia puede aceptar y rechazar facturas. Genérico ve la herramienta pero no decide.'
+        : 'Direcciones que reciben este aviso automático.';
+
+      $('meta').textContent =
+        `${state.form.list_id} · ${state.form.kind === 'access' ? 'lista de acceso' : 'lista de correo'}`;
+
+      renderRows();
+      updateSaveState();
+    }
+
+    function renderAll() {
+      renderTabs();
+      renderSidebar();
+      renderDetail();
+    }
+
+    // ── API ──────────────────────────────────────────────────────────
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Error inesperado del servidor.');
+      return data;
+    }
+
+    async function loadSession() {
+      try {
+        const data = await api('/api/session');
+        $('session-user').innerHTML = data.username ? `Conectado como <strong>${escapeHtml(data.username)}</strong>` : '';
+      } catch { /* la sesión no es crítica para operar */ }
+    }
+
+    async function loadLists(seleccionar = null) {
+      const data = await api('/api/lists');
+      state.lists = data.lists || [];
+      const candidatas = visibleLists();
+      const objetivo = seleccionar
+        || (candidatas.some((item) => item.list_id === state.currentId) ? state.currentId : null)
+        || (candidatas.length ? candidatas[0].list_id : null);
+      if (objetivo) {
+        await openList(objetivo);
+      } else {
+        state.currentId = null;
+        state.form = null;
+        state.pristine = null;
+        renderAll();
+      }
+    }
+
+    async function openList(listId) {
+      const item = await api(`/api/lists/${encodeURIComponent(listId)}`);
+      state.currentId = item.list_id;
+      state.form = formFromList(item);
+      state.pristine = snapshot(state.form);
+      $('history').innerHTML = '';
+      $('history-block').open = false;
+      renderAll();
+      setStatus('');
+    }
+
+    // ── Guardas de cambios sin guardar ───────────────────────────────
+    function puedeDescartar() {
+      if (!isDirty()) return true;
+      return window.confirm('Hay cambios sin guardar en esta lista. ¿Descartarlos?');
+    }
+
+    window.addEventListener('beforeunload', (event) => {
+      if (isDirty()) { event.preventDefault(); event.returnValue = ''; }
+    });
+
+    // ── Acciones ─────────────────────────────────────────────────────
+    async function switchSection(section) {
+      if (section === state.section) return;
+      if (!puedeDescartar()) return;
+      state.section = section;
+      state.currentId = null;
+      state.search = '';
+      $('search').value = '';
+      await loadLists();
+    }
+
+    async function save() {
+      if (!state.form || blockingProblems().length) return;
+      const roles = {};
+      const emails = [];
+      state.form.rows.forEach((row) => {
+        const email = row.email.trim();
+        if (!email) return;
+        emails.push(email);
+        if (state.form.kind === 'access') roles[email] = row.role;
+      });
+
+      const payload = {
+        name: state.form.name.trim(),
+        emails,
+        enabled: state.form.enabled,
+        kind: state.form.kind
+      };
+      // Solo se manda `roles` en listas de acceso. En las de correo, omitirlo
+      // deja intacto lo que hubiera (el backend distingue omitir de vaciar).
+      if (state.form.kind === 'access') payload.roles = roles;
+
+      const listId = state.currentId;
+      $('save').disabled = true;
+      setStatus('Guardando…');
+      try {
+        const saved = await api(`/api/lists/${encodeURIComponent(listId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        await loadLists(saved.list_id);
+        setStatus('Guardado correctamente.', 'ok');
+      } catch (error) {
+        setStatus(error.message, 'error');
+        $('save').disabled = false;
+      }
+    }
+
+    async function loadHistory() {
+      const root = $('history');
+      if (!state.currentId || root.dataset.loadedFor === state.currentId) return;
+      root.innerHTML = '<p class="empty">Cargando…</p>';
+      try {
+        const data = await api(`/api/lists/${encodeURIComponent(state.currentId)}/history`);
+        const items = data.history || [];
+        root.dataset.loadedFor = state.currentId;
+        root.innerHTML = items.length
+          ? items.map((item) => {
+              const fecha = item.updated_at ? new Date(item.updated_at).toLocaleString('es-ES') : 'sin fecha';
+              const total = (item.emails || []).length;
+              return `<div class="history-entry">
+                        ${escapeHtml(fecha)} · <strong>${escapeHtml(item.updated_by || 'desconocido')}</strong>
+                        <span>· ${total} ${total === 1 ? 'correo' : 'correos'}</span>
+                      </div>`;
+            }).join('')
+          : '<p class="empty">Sin cambios registrados.</p>';
+      } catch (error) {
+        root.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    async function logout() {
+      if (!puedeDescartar()) return;
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    }
+
+    // ── Eventos (delegación: un solo listener por zona) ──────────────
+    document.addEventListener('click', (event) => {
+      const tab = event.target.closest('.tab');
+      if (tab) { switchSection(tab.dataset.section); return; }
+
+      const item = event.target.closest('[data-select]');
+      if (item) {
+        const listId = item.dataset.select;
+        if (listId !== state.currentId && puedeDescartar()) openList(listId).catch((e) => setStatus(e.message, 'error'));
+        return;
+      }
+
+      const quitar = event.target.closest('[data-remove]');
+      if (quitar) {
+        state.form.rows.splice(Number(quitar.dataset.remove), 1);
+        if (!state.form.rows.length) state.form.rows.push({ email: '', role: 'generico' });
+        renderRows();
+        updateSaveState();
+        return;
+      }
+
+      const accion = event.target.closest('[data-action]');
+      if (!accion) return;
+      switch (accion.dataset.action) {
+        case 'add-row':
+          state.form.rows.push({ email: '', role: 'generico' });
+          renderRows();
+          updateSaveState();
+          $('rows').querySelector('.row:last-child .row-email')?.focus();
+          break;
+        case 'save': save(); break;
+        case 'load-history': loadHistory(); break;
+        case 'logout': logout(); break;
+      }
+    });
+
+    document.addEventListener('input', (event) => {
+      if (event.target.id === 'search') {
+        state.search = event.target.value;
+        renderSidebar();
+        return;
+      }
+      if (event.target.id === 'name') {
+        state.form.name = event.target.value;
+        updateSaveState();
+        return;
+      }
+      if (event.target.classList.contains('row-email')) {
+        const fila = event.target.closest('.row');
+        state.form.rows[Number(fila.dataset.index)].email = event.target.value;
+        refreshValidation();
+      }
+    });
+
+    document.addEventListener('change', (event) => {
+      if (event.target.id === 'enabled') {
+        state.form.enabled = event.target.checked;
+        updateSaveState();
+        return;
+      }
+      if (event.target.classList.contains('row-role')) {
+        const fila = event.target.closest('.row');
+        state.form.rows[Number(fila.dataset.index)].role = event.target.value;
+        updateSaveState();
+      }
+    });
+
+    // ── Arranque ─────────────────────────────────────────────────────
+    loadSession();
+    loadLists().catch((error) => {
+      console.error(error);
+      setStatus(error.message || 'No se pudieron cargar las listas.', 'error');
+    });
+  </script>
+</body>
+</html>

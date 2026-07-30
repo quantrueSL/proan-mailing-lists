@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Acceso · Listas y accesos</title>
+  <style>
+    /* Misma paleta que la pantalla principal y que proan-Hidrocarburos. */
+    :root {
+      --ink: #25272c;
+      --muted: #6f7278;
+      --line: #e4dfd8;
+      --accent: #3d3d7c;
+      --accent-hover: #202042;
+      --accent-ring: rgba(61, 61, 124, 0.2);
+      --danger: #a12626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      font-family: "Segoe UI", system-ui, Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #fbfaf7 0%, #f4f2ed 100%);
+      font-size: 15px;
+    }
+    .panel { width: 100%; max-width: 340px; }
+    h1 { margin: 0 0 6px; font-size: 26px; font-weight: 650; }
+    .lead { margin: 0 0 28px; color: var(--muted); font-size: 14px; }
+    form { display: grid; gap: 20px; }
+    label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+    input {
+      width: 100%;
+      padding: 9px 0;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      font: inherit;
+      color: var(--ink);
+    }
+    input:focus { outline: none; border-bottom-color: var(--accent); }
+    button {
+      margin-top: 4px;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { background: #dcdce4; color: #8b8b96; cursor: default; }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent-ring);
+      outline-offset: 2px;
+    }
+    .status { min-height: 20px; font-size: 13.5px; color: var(--muted); }
+    .status.is-error { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Listas y accesos</h1>
+    <p class="lead">Gestión de destinatarios de correo y de quién entra en las herramientas de Proan.</p>
+    <form id="login-form">
+      <label>
+        Usuario
+        <input id="username" name="username" autocomplete="username">
+      </label>
+      <label>
+        Contraseña
+        <input id="password" name="password" type="password" autocomplete="current-password">
+      </label>
+      <button id="submit" type="submit">Entrar</button>
+      <div id="status" class="status"></div>
+    </form>
+  </div>
+
+  <script>
+    function setStatus(message, isError = false) {
+      const el = document.getElementById('status');
+      el.textContent = message || '';
+      el.className = 'status' + (isError ? ' is-error' : '');
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const boton = document.getElementById('submit');
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        setStatus('Escribe usuario y contraseña.', true);
+        return;
+      }
+
+      // Se bloquea el botón mientras se envía: sin esto, dos pulsaciones rápidas
+      // lanzaban dos intentos de login.
+      boton.disabled = true;
+      setStatus('Entrando…');
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setStatus(data.error || 'No se pudo iniciar sesión.', true);
+          boton.disabled = false;
+          return;
+        }
+        window.location.href = data.redirect || '/';
+      } catch {
+        setStatus('No se pudo contactar con el servidor.', true);
+        boton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
