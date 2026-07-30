@@ -136,6 +136,52 @@
     .row.is-invalid .row-issue { color: var(--danger); }
     .add-row { margin-top: 14px; color: var(--accent); font-weight: 600; font-size: 14px; }
 
+    /* ── Grupos de una lista segmentada ────────────────────────────────
+       Acordeón plegado por defecto: con 16 sociedades, todo abierto serían
+       cientos de filas de scroll. Líneas separadoras, sin tarjetas. */
+    .grupos { margin-top: 10px; }
+    .grupo { border-bottom: 1px solid var(--line); }
+    /* La cabecera es un botón para desplegar, y el de quitar va al lado, no dentro:
+       un <button> dentro de otro es HTML inválido. */
+    .grupo-head-wrap { display: flex; align-items: center; gap: 6px; }
+    .grupo-head-wrap:hover { background: rgba(61, 61, 124, 0.04); }
+    .grupo-head {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+      padding: 13px 2px;
+    }
+    .grupo-caret {
+      width: 6px; height: 6px; margin-left: 3px;
+      border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+      transform: rotate(-45deg); transition: transform 120ms ease;
+    }
+    .grupo.abierto .grupo-caret { transform: rotate(45deg); }
+    .grupo-titulo { font-weight: 600; display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .grupo-global {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+      background: var(--accent-soft); color: var(--accent);
+    }
+    .grupo-cuenta { font-size: 13px; color: var(--muted); white-space: nowrap; }
+    .grupo-cuenta.is-invalid { color: var(--danger); }
+    .grupo-quitar { color: var(--muted); border-radius: 8px; width: 30px; height: 28px; font-size: 13px; }
+    .grupo-quitar:hover { background: var(--danger-soft); color: var(--danger); }
+    .grupo-body { padding: 2px 0 16px 26px; }
+    .grupo-body .add-row { margin-top: 10px; font-size: 13.5px; }
+    .grupo-vacio { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+
+    .add-group { display: flex; align-items: center; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+    .add-group input {
+      width: 240px; padding: 8px 0; border: 0;
+      border-bottom: 1px solid var(--line); background: transparent;
+    }
+    .add-group input:focus { outline: none; border-bottom-color: var(--accent); }
+    .add-group .add-row { margin-top: 0; }
+
     .actions { display: flex; align-items: center; gap: 16px; margin-top: 26px; flex-wrap: wrap; }
     .primary {
       padding: 12px 22px;
@@ -224,11 +270,26 @@
           </label>
         </div>
 
-        <div class="block">
+        <div class="block" id="rows-block">
           <div class="block-title" id="rows-title">Destinatarios</div>
           <p class="block-note" id="rows-note"></p>
           <div class="rows" id="rows"></div>
           <button class="add-row" type="button" data-action="add-row">+ Añadir</button>
+        </div>
+
+        <div class="block hidden" id="grupos-block">
+          <div class="block-title">Grupos de destinatarios</div>
+          <p class="block-note">
+            <strong>Globales</strong> recibe un único correo con todas las sociedades
+            juntas. Cada sociedad recibe su propio correo. Una dirección puede estar en
+            varios grupos.
+          </p>
+          <div class="grupos" id="grupos"></div>
+          <div class="add-group">
+            <input id="new-group" placeholder="Código de sociedad, p. ej. PAL"
+                   maxlength="16" autocomplete="off" spellcheck="false">
+            <button class="add-row" type="button" data-action="add-group">+ Añadir grupo</button>
+          </div>
         </div>
 
         <div class="actions">
@@ -261,13 +322,22 @@
     // Crear listas se hace en la consola de Firestore, no aquí: una lista nueva
     // es inútil hasta que algún código la lee, así que crearla desde la interfaz
     // sería media acción. Esta pantalla gestiona los miembros de las que existen.
+    // Identificador interno del grupo de globales. No es una sociedad, así que no
+    // puede colisionar con un código real: el backend exige mayúsculas.
+    const GLOBALES_ID = '__globales__';
+    const GROUP_KEY_RE = /^[A-Z0-9][A-Z0-9_-]{0,15}$/;
+
     const state = {
       section: 'mailing',
       lists: [],
       search: '',
       currentId: null,
       form: null,
-      pristine: null
+      pristine: null,
+      // Qué grupos están desplegados. Fuera de `form` a propósito: es estado de
+      // interfaz, y si estuviera dentro, abrir un grupo marcaría la lista como
+      // modificada y habilitaría el botón de guardar sin haber cambiado nada.
+      abiertos: new Set()
     };
 
     const $ = (id) => document.getElementById(id);
@@ -285,17 +355,57 @@
     }
 
     // ── Modelo del formulario ────────────────────────────────────────
+    /** Saca la dirección de 'Nombre Apellido <correo>', que es como vienen en las
+        hojas de cálculo de origen. Espeja `extract_email` del backend. */
+    function extraerCorreo(valor) {
+      let texto = String(valor ?? '').trim().replace(/,+$/, '').trim().replace(/^"|"$/g, '').trim();
+      const abre = texto.lastIndexOf('<');
+      const cierra = texto.lastIndexOf('>');
+      if (abre !== -1 && cierra > abre) texto = texto.slice(abre + 1, cierra).trim();
+      return texto;
+    }
+
     function formFromList(item) {
+      const segmentada = item.segmentada === true;
+      const grupos = [];
+      if (segmentada) {
+        grupos.push({
+          id: GLOBALES_ID,
+          titulo: 'Globales',
+          global: true,
+          rows: (item.globales || []).map((email) => ({ email, role: 'generico' }))
+        });
+        // Alfabético: con 16 sociedades es más fácil encontrar una por orden que
+        // recordar en qué posición estaba en la hoja de cálculo.
+        Object.keys(item.por_sociedad || {}).sort().forEach((clave) => {
+          grupos.push({
+            id: clave,
+            titulo: clave,
+            global: false,
+            rows: (item.por_sociedad[clave] || []).map((email) => ({ email, role: 'generico' }))
+          });
+        });
+      }
       return {
         list_id: item.list_id || '',
         name: item.name || '',
         kind: item.kind || 'mailing',
         enabled: item.enabled !== false,
-        rows: (item.emails || []).map((email) => ({
+        segmentada,
+        rows: segmentada ? [] : (item.emails || []).map((email) => ({
           email,
           role: (item.roles || {})[email] || 'generico'
-        }))
+        })),
+        grupos
       };
+    }
+
+    /** Todas las filas de la lista, sea plana o segmentada. */
+    function todasLasFilas() {
+      if (!state.form) return [];
+      return state.form.segmentada
+        ? state.form.grupos.flatMap((grupo) => grupo.rows)
+        : state.form.rows;
     }
 
     function snapshot(form) {
@@ -331,9 +441,19 @@
       if (!state.form) return ['No hay lista seleccionada.'];
       const problemas = [];
       if (!state.form.name.trim()) problemas.push('Falta el nombre.');
-      const issues = rowIssues(state.form.rows);
-      if (issues.some((issue) => issue && issue.blocking)) problemas.push('Hay correos mal escritos o repetidos.');
-      const utiles = state.form.rows.filter((row) => row.email.trim()).length;
+
+      // En una lista segmentada, los repetidos se buscan DENTRO de cada grupo. Que una
+      // dirección esté en varias sociedades es lo normal, no un error: justamente para
+      // eso existen los grupos.
+      const grupos = state.form.segmentada ? state.form.grupos : [{ rows: state.form.rows }];
+      const conProblema = grupos.filter((grupo) => rowIssues(grupo.rows).some((i) => i && i.blocking));
+      if (conProblema.length) {
+        problemas.push(state.form.segmentada
+          ? 'Hay correos mal escritos o repetidos dentro de un grupo.'
+          : 'Hay correos mal escritos o repetidos.');
+      }
+
+      const utiles = todasLasFilas().filter((row) => row.email.trim()).length;
       if (state.form.enabled && !utiles) problemas.push('Una lista activa necesita al menos un correo.');
       return problemas;
     }
@@ -371,24 +491,34 @@
       root.innerHTML = items.map((item) => {
         const activa = item.list_id === state.currentId;
         const total = (item.emails || []).length;
+        const sociedades = item.segmentada ? Object.keys(item.por_sociedad || {}).length : 0;
+        // En una lista segmentada el total son las direcciones distintas: la misma
+        // persona en cinco sociedades cuenta una vez.
+        const detalle = item.segmentada
+          ? `${total} ${total === 1 ? 'correo' : 'correos'} · ${sociedades} ${sociedades === 1 ? 'sociedad' : 'sociedades'}`
+          : `${total} ${total === 1 ? 'correo' : 'correos'}`;
         return `
           <button type="button" class="list-item ${activa ? 'active' : ''}" data-select="${escapeHtml(item.list_id)}">
             <span class="list-item-name">
               ${escapeHtml(item.name || item.list_id)}
               ${item.enabled === false ? '<span class="pill">Inactiva</span>' : ''}
             </span>
-            <span class="list-item-meta">${escapeHtml(item.list_id)} · ${total} ${total === 1 ? 'correo' : 'correos'}</span>
+            <span class="list-item-meta">${escapeHtml(item.list_id)} · ${detalle}</span>
           </button>`;
       }).join('');
     }
 
-    function renderRows() {
-      const root = $('rows');
-      if (!state.form) { root.innerHTML = ''; return; }
-      const conRol = state.form.kind === 'access';
-      const issues = rowIssues(state.form.rows);
+    /** Las filas de un grupo, o las de la lista plana si no se pasa grupo. */
+    function filasDe(grupoId) {
+      if (!state.form) return [];
+      if (!grupoId) return state.form.rows;
+      const grupo = state.form.grupos.find((item) => item.id === grupoId);
+      return grupo ? grupo.rows : [];
+    }
 
-      root.innerHTML = state.form.rows.map((row, index) => {
+    function filasHtml(rows, conRol) {
+      const issues = rowIssues(rows);
+      return rows.map((row, index) => {
         const issue = issues[index];
         const opciones = ROLES.map((rol) => `
           <option value="${rol.value}" ${row.role === rol.value ? 'selected' : ''}>${rol.label}</option>`).join('');
@@ -403,17 +533,87 @@
       }).join('');
     }
 
-    /** Actualiza avisos y botón sin volver a pintar las filas, para no perder
-        el foco mientras se escribe. */
+    function renderRows() {
+      const root = $('rows');
+      if (!state.form) { root.innerHTML = ''; return; }
+      root.innerHTML = filasHtml(state.form.rows, state.form.kind === 'access');
+    }
+
+    function cuentaGrupo(grupo) {
+      const utiles = grupo.rows.filter((row) => row.email.trim()).length;
+      const mal = rowIssues(grupo.rows).some((issue) => issue && issue.blocking);
+      return {
+        texto: mal
+          ? 'revisar'
+          : `${utiles} ${utiles === 1 ? 'correo' : 'correos'}`,
+        mal
+      };
+    }
+
+    function renderGrupos() {
+      const root = $('grupos');
+      if (!state.form || !state.form.segmentada) { root.innerHTML = ''; return; }
+
+      root.innerHTML = state.form.grupos.map((grupo) => {
+        const abierto = state.abiertos.has(grupo.id);
+        const cuenta = cuentaGrupo(grupo);
+        const cuerpo = abierto
+          ? `<div class="grupo-body">
+               ${grupo.rows.length
+                 ? `<div class="rows" data-grupo="${escapeHtml(grupo.id)}">${filasHtml(grupo.rows, false)}</div>`
+                 : '<p class="grupo-vacio">Sin destinatarios. Esta sociedad no recibirá correo.</p>'}
+               <button class="add-row" type="button" data-add-row="${escapeHtml(grupo.id)}">+ Añadir</button>
+             </div>`
+          : '';
+        return `
+          <div class="grupo ${abierto ? 'abierto' : ''}">
+            <div class="grupo-head-wrap">
+              <button class="grupo-head" type="button" data-toggle="${escapeHtml(grupo.id)}"
+                      aria-expanded="${abierto}">
+                <span class="grupo-caret"></span>
+                <span class="grupo-titulo">
+                  ${escapeHtml(grupo.titulo)}
+                  ${grupo.global ? '<span class="grupo-global">un solo correo</span>' : ''}
+                </span>
+                <span class="grupo-cuenta ${cuenta.mal ? 'is-invalid' : ''}">${escapeHtml(cuenta.texto)}</span>
+              </button>
+              ${grupo.global
+                ? ''
+                : `<button class="grupo-quitar" type="button" data-remove-group="${escapeHtml(grupo.id)}"
+                           aria-label="Quitar grupo" title="Quitar grupo">&#10005;</button>`}
+            </div>
+            ${cuerpo}
+          </div>`;
+      }).join('');
+    }
+
+    /** Actualiza avisos, contadores y botón sin volver a pintar las filas, para no
+        perder el foco mientras se escribe. */
     function refreshValidation() {
       if (!state.form) return;
-      const issues = rowIssues(state.form.rows);
-      $('rows').querySelectorAll('.row').forEach((el) => {
-        const issue = issues[Number(el.dataset.index)];
-        el.classList.toggle('is-invalid', Boolean(issue && issue.blocking));
-        const aviso = el.querySelector('.row-issue');
-        if (aviso) aviso.textContent = issue ? issue.text : '';
+
+      document.querySelectorAll('#detail .rows').forEach((contenedor) => {
+        const issues = rowIssues(filasDe(contenedor.dataset.grupo || null));
+        contenedor.querySelectorAll('.row').forEach((el) => {
+          const issue = issues[Number(el.dataset.index)];
+          el.classList.toggle('is-invalid', Boolean(issue && issue.blocking));
+          const aviso = el.querySelector('.row-issue');
+          if (aviso) aviso.textContent = issue ? issue.text : '';
+        });
       });
+
+      // El contador de la cabecera de cada grupo abierto tiene que seguir al texto
+      // que se está escribiendo, o dice una cosa mientras se ve otra.
+      if (state.form.segmentada) {
+        state.form.grupos.forEach((grupo) => {
+          const cabecera = document.querySelector(`[data-toggle="${CSS.escape(grupo.id)}"] .grupo-cuenta`);
+          if (!cabecera) return;
+          const cuenta = cuentaGrupo(grupo);
+          cabecera.textContent = cuenta.texto;
+          cabecera.classList.toggle('is-invalid', cuenta.mal);
+        });
+      }
+
       updateSaveState();
     }
 
@@ -442,15 +642,24 @@
       $('enabled').checked = state.form.enabled;
 
       const esAcceso = state.form.kind === 'access';
+      const segmentada = state.form.segmentada;
+
+      // Los dos modos son excluyentes: o una lista plana de correos, o grupos.
+      $('rows-block').classList.toggle('hidden', segmentada);
+      $('grupos-block').classList.toggle('hidden', !segmentada);
+
       $('rows-title').textContent = esAcceso ? 'Personas con acceso' : 'Destinatarios';
       $('rows-note').textContent = esAcceso
         ? 'Gerencia puede aceptar y rechazar facturas. Genérico ve la herramienta pero no decide.'
         : 'Direcciones que reciben este aviso automático.';
 
-      $('meta').textContent =
-        `${state.form.list_id} · ${state.form.kind === 'access' ? 'lista de acceso' : 'lista de correo'}`;
+      const tipo = esAcceso ? 'lista de acceso' : 'lista de correo';
+      const totalGrupos = segmentada ? state.form.grupos.length - 1 : 0;
+      $('meta').textContent = segmentada
+        ? `${state.form.list_id} · ${tipo} segmentada · ${totalGrupos} ${totalGrupos === 1 ? 'sociedad' : 'sociedades'}`
+        : `${state.form.list_id} · ${tipo}`;
 
-      renderRows();
+      if (segmentada) renderGrupos(); else renderRows();
       updateSaveState();
     }
 
@@ -497,6 +706,9 @@
       state.currentId = item.list_id;
       state.form = formFromList(item);
       state.pristine = snapshot(state.form);
+      // Cada lista se abre con los grupos plegados: dejar abiertos los de la lista
+      // anterior no dice nada de esta.
+      state.abiertos.clear();
       $('history').innerHTML = '';
       $('history-block').open = false;
       renderAll();
@@ -524,26 +736,45 @@
       await loadLists();
     }
 
+    function correosDe(rows) {
+      return rows.map((row) => extraerCorreo(row.email)).filter(Boolean);
+    }
+
     async function save() {
       if (!state.form || blockingProblems().length) return;
-      const roles = {};
-      const emails = [];
-      state.form.rows.forEach((row) => {
-        const email = row.email.trim();
-        if (!email) return;
-        emails.push(email);
-        if (state.form.kind === 'access') roles[email] = row.role;
-      });
 
       const payload = {
         name: state.form.name.trim(),
-        emails,
         enabled: state.form.enabled,
-        kind: state.form.kind
+        kind: state.form.kind,
+        segmentada: state.form.segmentada
       };
-      // Solo se manda `roles` en listas de acceso. En las de correo, omitirlo
-      // deja intacto lo que hubiera (el backend distingue omitir de vaciar).
-      if (state.form.kind === 'access') payload.roles = roles;
+
+      if (state.form.segmentada) {
+        // `emails` no se manda: en una lista segmentada lo calcula el servidor como la
+        // unión de los grupos. Los grupos vacíos SÍ se mandan, para que el grupo no
+        // desaparezca de la interfaz por quedarse sin gente.
+        const porSociedad = {};
+        state.form.grupos.forEach((grupo) => {
+          if (grupo.global) payload.globales = correosDe(grupo.rows);
+          else porSociedad[grupo.id] = correosDe(grupo.rows);
+        });
+        payload.por_sociedad = porSociedad;
+        if (!payload.globales) payload.globales = [];
+      } else {
+        const roles = {};
+        const emails = [];
+        state.form.rows.forEach((row) => {
+          const email = extraerCorreo(row.email);
+          if (!email) return;
+          emails.push(email);
+          if (state.form.kind === 'access') roles[email] = row.role;
+        });
+        payload.emails = emails;
+        // Solo se manda `roles` en listas de acceso. En las de correo, omitirlo
+        // deja intacto lo que hubiera (el backend distingue omitir de vaciar).
+        if (state.form.kind === 'access') payload.roles = roles;
+      }
 
       const listId = state.currentId;
       $('save').disabled = true;
@@ -603,11 +834,56 @@
         return;
       }
 
+      // Antes que el desplegable: el botón de quitar grupo está al lado de la
+      // cabecera, y sin este orden un clic en la equis también plegaría el grupo.
+      const quitarGrupo = event.target.closest('[data-remove-group]');
+      if (quitarGrupo) {
+        const grupoId = quitarGrupo.dataset.removeGroup;
+        const grupo = state.form.grupos.find((item) => item.id === grupoId);
+        const cuantos = grupo ? grupo.rows.filter((row) => row.email.trim()).length : 0;
+        const aviso = cuantos
+          ? `Quitar el grupo ${grupoId} y sus ${cuantos} ${cuantos === 1 ? 'dirección' : 'direcciones'}?`
+          : `Quitar el grupo ${grupoId}?`;
+        if (!window.confirm(aviso)) return;
+        state.form.grupos = state.form.grupos.filter((item) => item.id !== grupoId);
+        state.abiertos.delete(grupoId);
+        renderDetail();
+        return;
+      }
+
+      const desplegar = event.target.closest('[data-toggle]');
+      if (desplegar) {
+        const grupoId = desplegar.dataset.toggle;
+        if (state.abiertos.has(grupoId)) state.abiertos.delete(grupoId);
+        else state.abiertos.add(grupoId);
+        renderGrupos();
+        return;
+      }
+
+      const anadirEnGrupo = event.target.closest('[data-add-row]');
+      if (anadirEnGrupo) {
+        const grupoId = anadirEnGrupo.dataset.addRow;
+        filasDe(grupoId).push({ email: '', role: 'generico' });
+        renderGrupos();
+        updateSaveState();
+        document.querySelector(`.rows[data-grupo="${CSS.escape(grupoId)}"] .row:last-child .row-email`)?.focus();
+        return;
+      }
+
       const quitar = event.target.closest('[data-remove]');
       if (quitar) {
-        state.form.rows.splice(Number(quitar.dataset.remove), 1);
-        if (!state.form.rows.length) state.form.rows.push({ email: '', role: 'generico' });
-        renderRows();
+        const contenedor = quitar.closest('.rows');
+        const grupoId = contenedor ? (contenedor.dataset.grupo || null) : null;
+        const filas = filasDe(grupoId);
+        filas.splice(Number(quitar.dataset.remove), 1);
+        if (grupoId) {
+          // En un grupo se permite quedarse a cero: significa que esa sociedad no
+          // recibe correo, y es un estado legítimo.
+          renderGrupos();
+        } else {
+          if (!filas.length) filas.push({ email: '', role: 'generico' });
+          renderRows();
+        }
         updateSaveState();
         return;
       }
@@ -621,11 +897,35 @@
           updateSaveState();
           $('rows').querySelector('.row:last-child .row-email')?.focus();
           break;
+        case 'add-group': addGroup(); break;
         case 'save': save(); break;
         case 'load-history': loadHistory(); break;
         case 'logout': logout(); break;
       }
     });
+
+    function addGroup() {
+      const campo = $('new-group');
+      const clave = campo.value.trim().toUpperCase();
+      if (!clave) { setStatus('Escribe el código de la sociedad.', 'error'); return; }
+      if (!GROUP_KEY_RE.test(clave)) {
+        setStatus('Código inválido. Usa mayúsculas, números, guion o guion bajo.', 'error');
+        return;
+      }
+      if (state.form.grupos.some((grupo) => grupo.id === clave)) {
+        setStatus(`El grupo ${clave} ya existe.`, 'error');
+        return;
+      }
+      // Se inserta manteniendo el orden alfabético, dejando Globales siempre primero.
+      const nuevo = { id: clave, titulo: clave, global: false, rows: [{ email: '', role: 'generico' }] };
+      const sociedades = state.form.grupos.filter((grupo) => !grupo.global).concat(nuevo);
+      sociedades.sort((a, b) => a.id.localeCompare(b.id));
+      state.form.grupos = [...state.form.grupos.filter((grupo) => grupo.global), ...sociedades];
+      state.abiertos.add(clave);
+      campo.value = '';
+      renderDetail();
+      document.querySelector(`.rows[data-grupo="${CSS.escape(clave)}"] .row-email`)?.focus();
+    }
 
     document.addEventListener('input', (event) => {
       if (event.target.id === 'search') {
@@ -640,7 +940,8 @@
       }
       if (event.target.classList.contains('row-email')) {
         const fila = event.target.closest('.row');
-        state.form.rows[Number(fila.dataset.index)].email = event.target.value;
+        const contenedor = event.target.closest('.rows');
+        filasDe(contenedor ? (contenedor.dataset.grupo || null) : null)[Number(fila.dataset.index)].email = event.target.value;
         refreshValidation();
       }
     });
@@ -649,6 +950,20 @@
       if (event.target.id === 'enabled') {
         state.form.enabled = event.target.checked;
         updateSaveState();
+        return;
+      }
+      // Al salir del campo se limpia 'Nombre Apellido <correo>' y se deja la dirección.
+      // Se hace aquí y no al guardar para que lo que se ve sea lo que se manda.
+      if (event.target.classList.contains('row-email')) {
+        const fila = event.target.closest('.row');
+        const contenedor = event.target.closest('.rows');
+        const filas = filasDe(contenedor ? (contenedor.dataset.grupo || null) : null);
+        const limpio = extraerCorreo(event.target.value);
+        if (limpio !== event.target.value.trim()) {
+          event.target.value = limpio;
+          filas[Number(fila.dataset.index)].email = limpio;
+          refreshValidation();
+        }
         return;
       }
       if (event.target.classList.contains('row-role')) {

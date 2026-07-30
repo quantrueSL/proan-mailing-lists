@@ -19,6 +19,7 @@ FIRESTORE_DATABASE_ID = os.environ.get("FIRESTORE_DATABASE_ID", "proan-lista-mai
 LISTS_COLLECTION = "lists"
 AUTH_USERS_COLLECTION = "auth_users"
 MAX_EMAILS_PER_LIST = int(os.environ.get("MAX_EMAILS_PER_LIST", "100"))
+MAX_GROUPS_PER_LIST = int(os.environ.get("MAX_GROUPS_PER_LIST", "40"))
 MAX_HISTORY_ITEMS = int(os.environ.get("MAX_HISTORY_ITEMS", "20"))
 
 logger = logging.getLogger("mailing-lists")
@@ -33,6 +34,8 @@ class ValidationError(ValueError):
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LIST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{3,64}$")
+# Clave de grupo de una lista segmentada: el codigo de sociedad de SAP (PAL, PAN...).
+GROUP_KEY_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,15}$")
 
 # Dos tipos de lista, que la interfaz separa en secciones distintas:
 #   mailing -> destinatarios de un aviso automatico (p.ej. cambio_divisa)
@@ -178,14 +181,29 @@ def normalize_roles(raw_roles: Any, emails: list[str]) -> dict[str, str]:
     return roles
 
 
-def normalize_emails(raw_emails: Any) -> list[str]:
+def extract_email(raw: Any) -> str:
+    """
+    Saca la direccion de un texto que puede venir como 'Nombre Apellido <correo>'.
+
+    Ese es el formato en el que estan los destinatarios en las hojas de calculo de
+    origen, y es lo que se pega en el campo. Rechazarlo obligaria a limpiar a mano
+    ciento y pico direcciones.
+    """
+    texto = str(raw or "").strip().strip(",").strip().strip('"').strip()
+    if "<" in texto and ">" in texto:
+        texto = texto[texto.rfind("<") + 1 : texto.rfind(">")].strip()
+    return texto
+
+
+def _clean_emails(raw_emails: Any) -> list[str]:
+    """Valida y quita repetidos, sin aplicar limite de tamano."""
     if not isinstance(raw_emails, list):
         raise ValidationError("emails debe ser una lista.")
 
     normalized = []
     seen = set()
     for raw in raw_emails:
-        email = str(raw or "").strip()
+        email = extract_email(raw)
         if not email:
             continue
         if not EMAIL_RE.fullmatch(email):
@@ -195,12 +213,56 @@ def normalize_emails(raw_emails: Any) -> list[str]:
             continue
         seen.add(key)
         normalized.append(email)
+    return normalized
 
+
+def normalize_emails(raw_emails: Any) -> list[str]:
+    normalized = _clean_emails(raw_emails)
     if len(normalized) > MAX_EMAILS_PER_LIST:
         raise ValidationError(
             f"Demasiados emails. Limite actual: {MAX_EMAILS_PER_LIST}."
         )
     return normalized
+
+
+def normalize_group_key(value: Any) -> str:
+    key = str(value or "").strip().upper()
+    if not key:
+        raise ValidationError("El identificador de grupo no puede estar vacio.")
+    if not GROUP_KEY_RE.fullmatch(key):
+        raise ValidationError(
+            f"Identificador de grupo invalido: {value}. "
+            f"Usa mayusculas, numeros, guion o guion bajo."
+        )
+    return key
+
+
+def normalize_por_sociedad(raw_groups: Any) -> dict[str, list[str]]:
+    """
+    Mapa sociedad -> correos de una lista segmentada.
+
+    Los grupos vacios SE CONSERVAN. Un grupo sin nadie significa "esta sociedad
+    existe y no tiene destinatarios", que es informacion distinta de que el grupo no
+    exista: si se descartara, la interfaz dejaria de mostrarlo y habria que volver a
+    teclear el codigo para anadir gente.
+    """
+    if raw_groups is None:
+        return {}
+    if not isinstance(raw_groups, dict):
+        raise ValidationError(
+            "por_sociedad debe ser un objeto de sociedad a lista de correos."
+        )
+
+    grupos: dict[str, list[str]] = {}
+    for raw_key, raw_emails in raw_groups.items():
+        key = normalize_group_key(raw_key)
+        if key in grupos:
+            raise ValidationError(f"Grupo repetido: {key}.")
+        grupos[key] = normalize_emails(raw_emails)
+
+    if len(grupos) > MAX_GROUPS_PER_LIST:
+        raise ValidationError(f"Demasiados grupos. Limite actual: {MAX_GROUPS_PER_LIST}.")
+    return grupos
 
 
 def _serialize_timestamp(value: Any) -> str | None:
@@ -225,6 +287,11 @@ def _serialize_doc(snapshot) -> dict[str, Any] | None:
     data["enabled"] = bool(data.get("enabled", True))
     if not isinstance(data.get("roles"), dict):
         data["roles"] = {}
+    data["segmentada"] = bool(data.get("segmentada", False))
+    if not isinstance(data.get("globales"), list):
+        data["globales"] = []
+    if not isinstance(data.get("por_sociedad"), dict):
+        data["por_sociedad"] = {}
     return data
 
 
@@ -346,7 +413,30 @@ def get_list_history(list_id: str) -> list[dict[str, Any]]:
 
 def _build_record(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     enabled = bool(payload.get("enabled", True))
-    emails = normalize_emails(payload.get("emails"))
+    kind = normalize_kind(payload.get("kind"))
+    segmentada = bool(payload.get("segmentada", False))
+
+    if segmentada and kind == "access":
+        # El rol solo significa algo en una lista de acceso, y no hay forma sensata de
+        # repartirlo entre grupos. Mejor prohibir la combinacion que dejar un estado
+        # que nadie sabria interpretar.
+        raise ValidationError("Una lista de acceso no puede estar segmentada.")
+
+    globales = normalize_emails(payload.get("globales") or [])
+    por_sociedad = normalize_por_sociedad(payload.get("por_sociedad"))
+
+    if segmentada:
+        # `emails` es DERIVADO: la union de globales y de todos los grupos. En una lista
+        # segmentada los destinatarios de verdad son los grupos, asi que dejar `emails`
+        # como campo editable aparte garantizaria que se desincronizara. Se calcula sin
+        # aplicar MAX_EMAILS_PER_LIST porque el limite se controla ya en cada grupo, y
+        # penalizar por la suma seria castigar algo que nadie escribio a mano.
+        emails = _clean_emails(
+            [*globales, *(correo for grupo in por_sociedad.values() for correo in grupo)]
+        )
+    else:
+        emails = normalize_emails(payload.get("emails"))
+
     if enabled and not emails:
         raise ValidationError("La lista activa debe tener al menos un email valido.")
 
@@ -355,7 +445,10 @@ def _build_record(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "name": _normalize_name(payload.get("name")),
         "emails": emails,
         "roles": normalize_roles(payload.get("roles"), emails),
-        "kind": normalize_kind(payload.get("kind")),
+        "kind": kind,
+        "segmentada": segmentada,
+        "globales": globales,
+        "por_sociedad": por_sociedad,
         "enabled": enabled,
         "updated_at": datetime.now(timezone.utc),
         "updated_by": _normalize_updated_by(payload.get("updated_by")),
@@ -377,6 +470,9 @@ def save_list(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             effective_payload["roles"] = existing.get("roles")
         if not effective_payload.get("kind"):
             effective_payload["kind"] = existing.get("kind")
+        for campo in ("segmentada", "globales", "por_sociedad"):
+            if campo not in effective_payload:
+                effective_payload[campo] = existing.get(campo)
 
     record = _build_record(list_id, effective_payload)
     doc_ref = _list_doc_ref(record["list_id"])
@@ -391,6 +487,9 @@ def save_list(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "emails": record["emails"],
         "roles": record["roles"],
         "kind": record["kind"],
+        "segmentada": record["segmentada"],
+        "globales": record["globales"],
+        "por_sociedad": record["por_sociedad"],
         "enabled": record["enabled"],
         "updated_at": record["updated_at"],
         "updated_by": record["updated_by"],
