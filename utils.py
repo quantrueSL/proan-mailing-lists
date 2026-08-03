@@ -285,6 +285,9 @@ def _serialize_doc(snapshot) -> dict[str, Any] | None:
     # tambien en las listas creadas antes de que existieran estos campos.
     data["kind"] = normalize_kind(data.get("kind"))
     data["enabled"] = bool(data.get("enabled", True))
+    # Sin el campo -> la lista SI usa roles: es como se comportaban todas antes de
+    # que existiera, y el valor por defecto no debe cambiar lo que ya funciona.
+    data["usa_roles"] = bool(data.get("usa_roles", True))
     if not isinstance(data.get("roles"), dict):
         data["roles"] = {}
     data["segmentada"] = bool(data.get("segmentada", False))
@@ -414,6 +417,7 @@ def get_list_history(list_id: str) -> list[dict[str, Any]]:
 def _build_record(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     enabled = bool(payload.get("enabled", True))
     kind = normalize_kind(payload.get("kind"))
+    usa_roles = bool(payload.get("usa_roles", True))
     segmentada = bool(payload.get("segmentada", False))
 
     if segmentada and kind == "access":
@@ -440,12 +444,19 @@ def _build_record(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if enabled and not emails:
         raise ValidationError("La lista activa debe tener al menos un email valido.")
 
+    # `usa_roles: False` vacia los roles en el SERVIDOR, no solo en la interfaz.
+    # Si se confiara en que el cliente no los manda, una pestana abierta de antes
+    # del cambio seguiria escribiendo roles al guardar, y volveria el problema que
+    # esto arregla: roles visibles en una herramienta que no los usa.
+    roles = normalize_roles(payload.get("roles"), emails) if usa_roles else {}
+
     return {
         "list_id": _normalize_list_id(list_id),
         "name": _normalize_name(payload.get("name")),
         "emails": emails,
-        "roles": normalize_roles(payload.get("roles"), emails),
+        "roles": roles,
         "kind": kind,
+        "usa_roles": usa_roles,
         "segmentada": segmentada,
         "globales": globales,
         "por_sociedad": por_sociedad,
@@ -470,6 +481,10 @@ def save_list(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             effective_payload["roles"] = existing.get("roles")
         if not effective_payload.get("kind"):
             effective_payload["kind"] = existing.get("kind")
+        # `usa_roles` es configuracion de la lista, no algo que se edite desde la
+        # interfaz: el cliente no lo manda nunca, asi que se conserva siempre.
+        if "usa_roles" not in effective_payload:
+            effective_payload["usa_roles"] = existing.get("usa_roles", True)
         for campo in ("segmentada", "globales", "por_sociedad"):
             if campo not in effective_payload:
                 effective_payload[campo] = existing.get(campo)
@@ -487,6 +502,7 @@ def save_list(list_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "emails": record["emails"],
         "roles": record["roles"],
         "kind": record["kind"],
+        "usa_roles": record["usa_roles"],
         "segmentada": record["segmentada"],
         "globales": record["globales"],
         "por_sociedad": record["por_sociedad"],

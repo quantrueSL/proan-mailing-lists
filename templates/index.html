@@ -390,6 +390,9 @@
         list_id: item.list_id || '',
         name: item.name || '',
         kind: item.kind || 'mailing',
+        // Sin el campo -> la lista usa roles, como todas antes de que existiera.
+        // Se lee del documento y no se edita aqui: es configuracion de la lista.
+        usa_roles: item.usa_roles !== false,
         enabled: item.enabled !== false,
         segmentada,
         rows: segmentada ? [] : (item.emails || []).map((email) => ({
@@ -533,10 +536,17 @@
       }).join('');
     }
 
+    // Una lista de acceso solo reparte roles si su herramienta los usa. Hidrocarburos
+    // si (gerencia decide facturas); MAKA no, todo el que entra tiene acceso completo.
+    // Mostrar el desplegable donde no significa nada invita a creer que limita algo.
+    function conRoles() {
+      return !!state.form && state.form.kind === 'access' && state.form.usa_roles;
+    }
+
     function renderRows() {
       const root = $('rows');
       if (!state.form) { root.innerHTML = ''; return; }
-      root.innerHTML = filasHtml(state.form.rows, state.form.kind === 'access');
+      root.innerHTML = filasHtml(state.form.rows, conRoles());
     }
 
     function cuentaGrupo(grupo) {
@@ -649,9 +659,15 @@
       $('grupos-block').classList.toggle('hidden', !segmentada);
 
       $('rows-title').textContent = esAcceso ? 'Personas con acceso' : 'Destinatarios';
-      $('rows-note').textContent = esAcceso
-        ? 'Gerencia puede aceptar y rechazar facturas. Genérico ve la herramienta pero no decide.'
-        : 'Direcciones que reciben este aviso automático.';
+      if (!esAcceso) {
+        $('rows-note').textContent = 'Direcciones que reciben este aviso automático.';
+      } else if (conRoles()) {
+        $('rows-note').textContent =
+          'Gerencia puede aceptar y rechazar facturas. Genérico ve la herramienta pero no decide.';
+      } else {
+        $('rows-note').textContent =
+          'Quien esté en la lista entra con acceso completo. Esta herramienta no usa roles.';
+      }
 
       const tipo = esAcceso ? 'lista de acceso' : 'lista de correo';
       const totalGrupos = segmentada ? state.form.grupos.length - 1 : 0;
@@ -768,12 +784,13 @@
           const email = extraerCorreo(row.email);
           if (!email) return;
           emails.push(email);
-          if (state.form.kind === 'access') roles[email] = row.role;
+          if (conRoles()) roles[email] = row.role;
         });
         payload.emails = emails;
-        // Solo se manda `roles` en listas de acceso. En las de correo, omitirlo
-        // deja intacto lo que hubiera (el backend distingue omitir de vaciar).
-        if (state.form.kind === 'access') payload.roles = roles;
+        // Solo se manda `roles` en listas de acceso QUE los usen. Omitirlo deja
+        // intacto lo que hubiera (el backend distingue omitir de vaciar), y en las
+        // listas sin roles el backend los vacia igualmente por su cuenta.
+        if (conRoles()) payload.roles = roles;
       }
 
       const listId = state.currentId;
